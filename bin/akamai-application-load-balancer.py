@@ -129,7 +129,6 @@ def push_change(balancing, loadid, verbose):
 
 # Activate load balancing ID
 def activate_load_id(data, loadid, verbose):
-    global global_result
     print('INFO: activating the new load balancing version')
     headers = {'content-type': 'application/json'}
     # Convert the json object to a string that the API can interpret
@@ -144,16 +143,15 @@ def activate_load_id(data, loadid, verbose):
         request_activation = json.loads(request_activation.text)
         if verbose:
             print('\nDEBUG: API Endpoint:', urljoin(baseurl, '/cloudlets/api/v2/origins/' + loadid + '/activations'))
-            print('DEBUG:',request_activation,'\n')
+            print('DEBUG: ',request_activation,'\n')
         return()
     else:
         print('ERROR: load balancing ID', loadid, 'or version', str(version), 'not found')
-        global_result = 'ERROR: load balancing ID ' + loadid + ' or version ' + str(version) + ' not found'
         return()
 
 
 # Get the policyId, property names and production version
-def get_single_policy_associations(policyName, cloudletId, Flask_UI):    
+def get_single_policy_associations(policyName, cloudletId):    
     response = session.get(urljoin(baseurl, '/cloudlets/api/v2/policies?cloudletId=' + cloudletId))
     response = json.loads(response.text)
 
@@ -168,11 +166,8 @@ def get_single_policy_associations(policyName, cloudletId, Flask_UI):
                 list_of_properties.append(activations['propertyInfo']['name'])
    
     if policyId is False:
-        if Flask_UI is True:
-            return('','','')
-        else:
-            print('Policy Not Found')
-            exit()
+        print('Policy Not Found')
+        exit()
     else:
         return(policyId, version, set(list_of_properties))
 
@@ -260,8 +255,7 @@ def get_associated_origins(loadbalancing_name):
 
     else:
         print('Policy Not Found')
-        global_result = '404'
-        
+
 
 # Print the properties, policies and load balancing Ids in a tree view.
 def search_results_print(properties, policy, loadbalancing_ids):
@@ -273,14 +267,10 @@ def search_results_print(properties, policy, loadbalancing_ids):
 
     print('    |---------',policy)
 
-    for counter, loadbalancing_name in enumerate(loadbalancing_ids):
+    for loadbalancing_name in loadbalancing_ids:
         print('              |------------',loadbalancing_name) 
-        origin_ids = get_associated_origins(loadbalancing_name)
-        
-        # Replacing the list of load IDs with a dictionary for each load ID and its respective origin IDs.
-        mini_dict =  {loadbalancing_name:origin_ids}
-        global_result[policy][1][counter]=mini_dict
 
+        origin_ids = get_associated_origins(loadbalancing_name)
         for origin_name in origin_ids:
             print('                           |------------',origin_name) 
     return()
@@ -302,7 +292,7 @@ def init_config(edgerc_file, section):
 
     if not section:
         if not os.getenv("AKAMAI_EDGERC_SECTION"):
-            section = "betajam"
+            section = "cloudlets"
         else:
             section = os.getenv("AKAMAI_EDGERC_SECTION")
 
@@ -323,7 +313,8 @@ def init_config(edgerc_file, section):
         exit(1)
 
 
-def menu():
+# Main function
+def main():
     global args
 
     parser = MyArgumentParser(
@@ -371,10 +362,8 @@ def menu():
 
     if len(sys.argv) <= 1:
         parser.print_help()
-        return 0   
+        return 0
 
-
-def action_commands():
     global baseurl, session
 
     if args.command == 'help':
@@ -405,7 +394,7 @@ def action_commands():
         if args.stage:
             get_active = 'STAGING'
 
-        print('\n*** getting the latest active version in', get_active)
+        print('\nINFO: getting the latest active version in', get_active)
         version = load_id_version(get_active, args.loadid)
         if version != 'null':
             balancing = get_load_version(version, args.loadid, args.verbose)
@@ -431,7 +420,6 @@ def action_commands():
                     data = {'network': args.activate, 'originId': args.loadid, 'version': push_version}
                     activate_load_id(data, args.loadid, args.verbose)
                     return()
-            
 
     elif args.command == 'activate':
         init_config(args.edgerc, args.section)
@@ -447,7 +435,7 @@ def action_commands():
         if args.type == 'policy':
             print('\nINFO: searching for policy', args.name)
             # cloudletId=9 is for ALB
-            policyId, version, list_of_properties = get_single_policy_associations(args.name, cloudletId='9', Flask_UI=False)
+            policyId, version, list_of_properties = get_single_policy_associations(args.name, cloudletId='9')
             
             associated_balancing_ids = get_associated_balancing_ids(policyId, version)
             
@@ -472,132 +460,7 @@ def action_commands():
             if notFound is True:
                 print('ERROR: load balancing ID not found or has no associations')
         return()
-
-
-def update_command_flask_ui(loadid, datacenters, stage, activate, edgerc, section, verbose):  
-    init_config(edgerc, section)
-    # Process the DC/% input for later use
-    dc_string = datacenters
-    # Convert input DC/% string and convert it to a dictionary
-    dc_string = dict(x.split(':') for x in dc_string.split(','))
-    # Update the dictionary so that all values are float and not strings
-    for dc_string_name, dc_string_value in dc_string.items():
-        dc_string_value = float(dc_string_value)
-        dc_string[dc_string_name] = dc_string_value
-
-    # By default pull the information from the last version active in production.
-    global get_active, global_result
-    get_active = 'PRODUCTION'
-    # If the -s option is used then use the last version active in staging.
-    if stage:
-        get_active = 'STAGING'
-
-    print('\nINFO: getting the latest active version in', get_active, '***\n')
-    version = load_id_version(get_active, loadid)
-    if version != 'null':
-        balancing = get_load_version(version, loadid, verbose)
-        index = create_dc_index(balancing)
-        # Overwritting the origin json response with the new % values
-        balancing = modify_datacenters(balancing, index, dc_string)
-        
-        if balancing == 'dc_not_found':
-            global_result = 'Data Center(s) Not Found'
-
-        elif balancing == 'wrong_weights':
-            global_result = 'ERROR: Weights sum doesn\'t add to 100.0. Please check the weights.'
-
-        else:
-            if verbose:
-                print('\n',balancing,'\n')
-            # Overwritting the json again to include description change
-            balancing = update_params_balancing(balancing, version)
-            push_version = push_change(balancing, loadid, verbose)
-            print('INFO: new version is',push_version)
-
-            if activate:
-                data = {'network': activate, 'originId': loadid, 'version': push_version}
-                activate_load_id(data, loadid, verbose)
-                return()
-
-    else:
-        global_result = 'Load Balancing ID or Active version(s) Not Found'
-        
-
-def activate_command_flask_ui(loadid, version, network, edgerc, section, verbose):
-    init_config(edgerc, section)
-    data = {'network': network, 'originId': loadid, 'version': version}
-    activate_load_id(data, loadid, verbose)
-    return()
-
-
-def search_command_flask_ui(name, search_type, edgerc, section):
-    init_config(edgerc, section)
-    global d, global_result
-    # global_result will be a dictionary structure of the search results which will be returned to flask.
-    d = {}
-
-    init_config(edgerc, section)
-
-    if search_type == 'policy':
-        print('INFO: searching for policy', name)
-        # cloudletId=9 is for ALB
-        policyId, version, list_of_properties = get_single_policy_associations(name, cloudletId='9', Flask_UI=True)
-        if policyId != '':
-            global_result.setdefault(name, []).append(list(list_of_properties))
-
-            associated_balancing_ids = get_associated_balancing_ids(policyId, version)
-            global_result.setdefault(name, []).append(associated_balancing_ids)
-
-            search_results_print(list_of_properties, name, associated_balancing_ids)
-        else:
-            global_result = 'ERROR: policy not found or has no associations'
-            print(global_result)
-
-    elif search_type == 'loadid':
-        print('INFO: searching for load balancing ID', name)
-        get_all_policy_associations(cloudletId='9')
-        get_all_associated_balancing_ids()
-
-        # Search for the load balancing ID in the dictionary and display the associated policy and properties.
-        notFound = True
-        for policyName, content in d.items():
-            list_of_balancing_ids = content[3]
-            if type(list_of_balancing_ids) is list:
-                for balancing_id in list_of_balancing_ids:
-                    if balancing_id == name:
-                        notFound = False
-                        global_result.setdefault(policyName, []).append(content[2])
-                        global_result.setdefault(policyName, []).append(list_of_balancing_ids)
-                        search_results_print(content[2], policyName, list_of_balancing_ids)
-        if notFound is True:
-            global_result = 'ERROR: load balancing ID not found or has no associations'
-            print(global_result)
-    return()
-
-
-# Main function
-def main(interface='', command='', loadid='', datacenters='', stage='', activate='', version='', network='', name='', search_type=''):
-    global baseurl, session, global_result
-    global_result = {}
-        
-    if interface == 'flask_ui':
-        if command == 'update':
-            update_command_flask_ui(loadid, datacenters, stage, activate, edgerc='', section='', verbose='')
-
-        elif command == 'activate':
-            activate_command_flask_ui(loadid, version, network, edgerc='', section='', verbose='')
-        
-        elif command == 'search':
-            search_command_flask_ui(name, search_type, edgerc='', section='')
-        print('TO FLASK:', global_result)
-
-        return(global_result)
-
-    else:
-        menu()
-        action_commands()
-    return()
-     
+            
 
 # MAIN PROGRAM
 if __name__ == "__main__":
