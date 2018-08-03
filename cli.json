@@ -1,0 +1,13 @@
+{
+  "requirements": {
+    "python": "3.0.0"
+  },
+  "commands": [
+    {
+      "name": "application-load-balancer",
+      "aliases": ["alb"],
+      "version": "1.0.0",
+      "description": "An example Akamai CLI command for ALB Cloudlet written in Python"
+    }
+  ]
+}
